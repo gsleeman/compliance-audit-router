@@ -1,0 +1,36 @@
+# Internal to-do task list
+TODO.md
+
+# Slideshow
+*slides.md
+
+# Example Splunk Webhook
+WEBHOOK
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Certs or keys
+*.key
+*.crt
+*.cert
+*.pem
+*.csr
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+
+# Temp
+Dockerfile
+EXAMPLE_*
