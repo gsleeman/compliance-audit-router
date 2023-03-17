@@ -17,6 +17,7 @@ limitations under the License.
 package listeners
 
 import (
+	"github.com/go-chi/chi/v5"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -33,6 +34,43 @@ func TestListenerURIs(t *testing.T) {
 	}
 }
 
+func TestInitRoutes(t *testing.T) {
+	r := chi.NewRouter()
+	InitRoutes(r)
+
+	if len(r.Routes()) != 3 {
+		t.Errorf("Failed to initialize all routes.")
+	}
+
+	paths := []string{"/readyz", "/healthz", "/api/v1/alert"}
+
+	for _, route := range r.Routes() {
+		found := false
+		for i, path := range paths {
+			if route.Pattern == path {
+				found = true
+				paths = append(paths[:i], paths[i+1:]...)
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Unexpected route pattern found: %v", route.Pattern)
+		}
+	}
+}
+
+func TestRespondOKHandler(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	RespondOKHandler(recorder, nil)
+
+	if status := recorder.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+	if body := recorder.Body.String(); body != "OK" {
+		t.Errorf("handler returned wrong body: got %v want %v", body, "OK")
+	}
+}
+
 func TestProcessAlertHandler(t *testing.T) {
 	// Example webhook payloads that might be received from the
 	// alerting system (ie: Splunk)
@@ -46,20 +84,11 @@ func TestProcessAlertHandler(t *testing.T) {
 		{
 			name:                "empty webhook should fail",
 			incomingWebhookBody: "",
-			status:              http.StatusInternalServerError,
-			contentType:         "text/plain",
-			body:                "failed to process webhook",
-		},
-		{
-			name:                "testing webhook 01",
-			incomingWebhookBody: "",
-			status:              http.StatusOK,
-			contentType:         "text/plain",
-			body:                "ok",
+			status:              http.StatusBadRequest,
+			contentType:         "text/plain; charset=utf-8",
+			body:                "Request body must not be empty",
 		},
 	}
-
-	handler := http.HandlerFunc(ProcessAlertHandler)
 
 	for _, tt := range tests {
 		// Create a test incoming webhook request to the http server
@@ -70,8 +99,6 @@ func TestProcessAlertHandler(t *testing.T) {
 
 		// ResponseRecorder is used to store the server response
 		recorder := httptest.NewRecorder()
-
-		handler.ServeHTTP(recorder, req)
 
 		t.Run(tt.name, func(t *testing.T) {
 			ProcessAlertHandler(recorder, req)
@@ -88,9 +115,9 @@ func TestProcessAlertHandler(t *testing.T) {
 			}
 
 			// Test the returned body
-			if body := recorder.Body.String(); body != string(tt.body) {
+			if body := strings.TrimSpace(recorder.Body.String()); body != tt.body {
 				t.Errorf("handler returned unexpected body: got %v, want %v",
-					body, string(tt.body))
+					body, tt.body)
 			}
 		})
 	}
