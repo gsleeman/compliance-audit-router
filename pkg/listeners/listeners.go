@@ -31,12 +31,6 @@ import (
 	"github.com/openshift/compliance-audit-router/pkg/splunk"
 )
 
-// Handler defines an HTTP route handler
-type Handler struct {
-	Route func(r *mux.Route)
-	Func  http.HandlerFunc
-}
-
 type Listener struct {
 	Path        string
 	Methods     []string
@@ -47,37 +41,32 @@ var Listeners = []Listener{
 	{
 		Path:        "/readyz",
 		Methods:     []string{http.MethodGet},
-		HandlerFunc: http.HandlerFunc(RespondOKHandler),
+		HandlerFunc: RespondOKHandler,
 	},
 	{
 		Path:        "/healthz",
 		Methods:     []string{http.MethodGet},
-		HandlerFunc: http.HandlerFunc(RespondOKHandler),
+		HandlerFunc: RespondOKHandler,
 	},
 	{
 		Path:        "/api/v1/alert",
 		Methods:     []string{http.MethodPost},
-		HandlerFunc: http.HandlerFunc(ProcessAlertHandler),
+		HandlerFunc: ProcessAlertHandler,
 	},
 }
 
-// CreateListener creates a new HTTP Handler from the provided path, HTTP method, and handler function
-func CreateListener(path string, methods []string, handlerFunc http.HandlerFunc) Handler {
-	if config.AppConfig.Verbose {
-		log.Println("enabling endpoint", path, methods)
+// InitRoutes initializes routes from the defined Listeners
+func InitRoutes(router *mux.Router) {
+	for _, listener := range Listeners {
+		if config.AppConfig.Verbose {
+			log.Println("enabling endpoint", listener.Path, listener.Methods)
+		}
+		router.NewRoute().
+			HandlerFunc(listener.HandlerFunc).
+			Name(listener.Path).
+			Path(listener.Path).
+			Methods(listener.Methods...)
 	}
-
-	return Handler{
-		Route: func(r *mux.Route) {
-			r.Path(path).Methods(methods...)
-		},
-		Func: handlerFunc,
-	}
-}
-
-// AddRoute adds a new route to the router for the handler
-func (h Handler) AddRoute(r *mux.Router) {
-	h.Route(r.NewRoute().HandlerFunc(h.Func))
 }
 
 // RespondOKHandler replies with a 200 OK and "OK" text to any request, for health checks

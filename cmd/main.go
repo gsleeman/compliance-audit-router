@@ -35,9 +35,7 @@ func main() {
 	r := mux.NewRouter()
 	r.Use(loggingMiddleware)
 
-	for _, listener := range listeners.Listeners {
-		listeners.CreateListener(listener.Path, listener.Methods, listener.HandlerFunc).AddRoute(r)
-	}
+	listeners.InitRoutes(r)
 
 	log.Printf("Listening on %s", portString)
 	log.Fatal(http.ListenAndServe(portString, r))
