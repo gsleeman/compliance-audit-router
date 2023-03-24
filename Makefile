@@ -1,3 +1,7 @@
+IMAGE_NAME := compliance-audit-router
+
+include boilerplate/generated-includes.mk
+
 SHELL := /usr/bin/env bash
 
 # Verbosity
@@ -25,7 +29,7 @@ TESTOPTS ?=-v
 
 default: all
 
-all: test
+all: build test
 
 .PHONY: test
 test: vet $(GO_SOURCES)
@@ -44,10 +48,13 @@ vet:
 	$(AT)gofmt -s -l $(shell go list -f '{{ .Dir }}' ./... ) | grep ".*\.go"; if [ "$$?" = "0" ]; then gofmt -s -d $(shell go list -f '{{ .Dir }}' ./... ); exit 1; fi
 	$(AT)go vet ./cmd/... ./pkg/...
 
-.PHONY: build
+.PHONY:
 build: $(BINARY_FILE)
 
-$(BINARY_FILE): test $(GO_SOURCES)
+$(BINARY_FILE): $(GO_SOURCES)
 	mkdir -p $(shell dirname $(BINARY_FILE))
 	$(GOENV) go build $(GOBUILDFLAGS) -o $(BINARY_FILE) ./cmd
 
+.PHONY: boilerplate-update
+boilerplate-update:
+	@boilerplate/update
