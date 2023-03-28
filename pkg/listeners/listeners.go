@@ -19,15 +19,14 @@ package listeners
 import (
 	"errors"
 	"fmt"
+	"github.com/go-chi/chi/v5"
+	"github.com/openshift/compliance-audit-router/pkg/jira"
+	"github.com/openshift/compliance-audit-router/pkg/ldap"
 	"log"
 	"net/http"
 	"os"
 
-	"github.com/gorilla/mux"
-	"github.com/openshift/compliance-audit-router/pkg/config"
 	"github.com/openshift/compliance-audit-router/pkg/helpers"
-	"github.com/openshift/compliance-audit-router/pkg/jira"
-	"github.com/openshift/compliance-audit-router/pkg/ldap"
 	"github.com/openshift/compliance-audit-router/pkg/splunk"
 )
 
@@ -56,21 +55,16 @@ var Listeners = []Listener{
 }
 
 // InitRoutes initializes routes from the defined Listeners
-func InitRoutes(router *mux.Router) {
+func InitRoutes(router *chi.Mux) {
 	for _, listener := range Listeners {
-		if config.AppConfig.Verbose {
-			log.Println("enabling endpoint", listener.Path, listener.Methods)
+		for _, method := range listener.Methods {
+			router.Method(method, listener.Path, listener.HandlerFunc)
 		}
-		router.NewRoute().
-			HandlerFunc(listener.HandlerFunc).
-			Name(listener.Path).
-			Path(listener.Path).
-			Methods(listener.Methods...)
 	}
 }
 
 // RespondOKHandler replies with a 200 OK and "OK" text to any request, for health checks
-func RespondOKHandler(w http.ResponseWriter, r *http.Request) {
+func RespondOKHandler(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte("OK"))
@@ -107,6 +101,7 @@ func ProcessAlertHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("%+v\n", alert)
 
 	os.Exit(1)
+
 	//user, manager, err := ldap.LookupUser(searchResults.UserName)
 	user, manager, err := ldap.LookupUser("TODO USERNAME GOES HERE")
 	if err != nil {
