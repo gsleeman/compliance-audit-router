@@ -87,7 +87,7 @@ func ProcessAlertHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Println("Received alert from Splunk:", alert.Sid, alert.Result.Raw)
+	log.Println("Received alert from Splunk:", alert.Sid)
 
 	// searchResults, err := splunk.RetrieveSearchFromAlert(alert.Sid)
 	// if err != nil {
