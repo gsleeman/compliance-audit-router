@@ -44,14 +44,7 @@ type Alert struct {
 }
 
 // searchResult represents an actual SPLUNK search result
-type SearchResult struct {
-	Index      string `json:"index"`
-	Source     string `json:"source"`
-	SourceType string `json:"sourcetype"`
-	User       string `json:"user"`
-	Action     string `json:"action"`
-	Raw        string `json:"_raw"`
-}
+type SearchResult map[string]interface{}
 
 // searchResults represents the results of a Splunk API */results call
 type SearchResults struct {
@@ -72,7 +65,6 @@ func RetrieveSearchFromAlert(sid string) (Alert, error) {
 	var searchResults = SearchResults{}
 
 	alert.SearchID = sid
-
 	transport := &http.Transport{}
 	// Allow insecure connections for development
 	if config.AppConfig.SplunkConfig.AllowInsecure {
@@ -112,14 +104,15 @@ func RetrieveSearchFromAlert(sid string) (Alert, error) {
 	alert.SearchResults = searchResults
 
 	log.Printf("Received alert from Splunk: %s", alert.SearchID)
-	for _, result := range alert.SearchResults.Results {
-		log.Println(result.Raw)
+	for _, result := range alert.Details() {
+		log.Println(result)
 	}
 
 	// TODO: Can we make the un-marshalling of the XML response agnostic to any specific service?  Interfaces?
 	//var search Results
 
 	os.Exit(1)
+
 	return alert, err
 }
 
