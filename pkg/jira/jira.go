@@ -17,221 +17,209 @@ limitations under the License.
 package jira
 
 import (
-	"encoding/csv"
+	"bytes"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
-	"time"
 
 	"github.com/andygrunwald/go-jira"
 	"github.com/openshift/compliance-audit-router/pkg/config"
-	"github.com/openshift/compliance-audit-router/pkg/splunk"
 )
 
-const managedLabel string = "compliance-audit-router-managed"
+const (
+	managedLabel    = "compliance-audit-router/managed"
+	sreLabelKey     = "compliance-audit-router/sre"
+	managerLabelKey = "compliance-audit-router/manager"
+	sreLabel        = sreLabelKey + ":%v"
+	managerLabel    = managerLabelKey + ":%v"
+	unknownUser     = "unknown"
 
-func CreateTicket(user, manager string, searchResults splunk.SearchResult) error {
-	return nil
+	initialTransitionKey = "initial"
+	sreTransitionKey     = "sre"
+	managerTransitionKey = "manager"
+
+	ticketSummary = "Compliance Alert: SRE Cluster Admin Elevation"
+)
+
+type Webhook struct {
+	Issue   jira.Issue
+	Comment jira.Comment
 }
 
-// func Run is a wrapper for initial jira-go testing
-func Run() {
-	// Auth
-	transport := jira.PATAuthTransport{
-		Token: config.AppConfig.JiraConfig.Token,
-	}
-
-	c, err := jira.NewClient(transport.Client(), config.AppConfig.JiraConfig.Host)
-	if err != nil {
-		fmt.Print(err)
-	}
-
-	issues, err := GetAllIssues(c, config.AppConfig.JiraConfig.Query)
-	if err != nil {
-		fmt.Print(err)
-	}
-
-	for _, issue := range issues {
-		doSomethingWithIssue(c, &issue)
-	}
-}
-
-func GetAllIssues(client *jira.Client, searchString string) ([]jira.Issue, error) {
-	last := 0
-	var issues []jira.Issue
-	for {
-		opt := &jira.SearchOptions{
-			MaxResults: 100,
-			StartAt:    last,
-			Fields:     []string{"created", "summary", "assignee", "labels", "attachment"},
-		}
-
-		chunk, resp, err := client.Issue.Search(searchString, opt)
-		if err != nil {
-			return nil, err
-		}
-
-		total := resp.Total
-		if issues == nil {
-			issues = make([]jira.Issue, 0, total)
-		}
-
-		issues = append(issues, chunk...)
-
-		last = resp.StartAt + len(chunk)
-		if last >= total {
-			return issues, nil
-		}
-	}
-}
-
-func doSomethingWithIssue(client *jira.Client, issue *jira.Issue) error {
-	// Unassigned issues don't have an Assignee object to grab the name from
-	if issue.Fields.Assignee == nil {
-		fmt.Printf("\t%s\tUNASSIGNED\t%s\n", issue.Key, issue.Fields.Summary)
+func DefaultClient() (*jira.Client, error) {
+	var transportClient *http.Client
+	if config.AppConfig.JiraConfig.Dev {
+		transportClient = basicAuthClient(config.AppConfig.JiraConfig.Username, config.AppConfig.JiraConfig.Token)
 	} else {
-		fmt.Printf("\t%s\t%s\t%s\n", issue.Key, issue.Fields.Assignee.DisplayName, issue.Fields.Summary)
+		transportClient = patAuthClient(config.AppConfig.JiraConfig.Token)
 	}
 
-	if !issueHasLabel(issue, managedLabel) {
-		log.Printf("Adding compliance label to issue %s\n", issue.Key)
+	return jira.NewClient(transportClient, config.AppConfig.JiraConfig.Host)
+}
 
-		labels := map[string]interface{}{
-			"fields": map[string]interface{}{
-				"labels": append(issue.Fields.Labels, managedLabel),
-			},
-		}
-
-		_, err := client.Issue.UpdateIssue(issue.Key, labels)
-		if err != nil {
-			return err
-		}
+func CreateTicket(userService *jira.UserService, issueService *jira.IssueService, user string, manager string, description string) error {
+	reporterUser, _, err := userService.GetSelf()
+	if err != nil {
+		return fmt.Errorf("failed to get Jira user for reporter: %w", err)
 	}
 
-	var alert_data []map[string]string
-
-	for _, attachment := range issue.Fields.Attachments {
-		if validateAttachment(issue.Fields.Summary, issue.Fields.Created, attachment) {
-			resp, err := client.Issue.DownloadAttachment(attachment.ID)
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("Error retrieving attachment: %s", resp.Status)
-			}
-
-			csv_reader := csv.NewReader(resp.Body)
-			csv_reader.Comma = ','
-
-			alert_data, err = convertCSVToMap(csv_reader)
-			if err != nil {
-				return err
-			}
-
-			fmt.Println(alert_data)
-		}
+	sreUser, err := getUserByName(userService, user)
+	if err != nil {
+		log.Printf("Failed to fetch SRE's Jira account. The ticket will be created with no assignee and need to be managed manually: %v\n", err)
+		sreUser = &jira.User{AccountID: unknownUser}
 	}
 
-	fmt.Printf("\tUser: %s\n", alert_data[0]["User"])
-	// fmt.Printf("\tBackplaneID: %s\n", alert_data[0]["BackplaneID"])
-	// fmt.Printf("\tCluster: %s\n", alert_data[0]["clusterid"])
+	managerUser, err := getUserByName(userService, manager)
+	if err != nil {
+		log.Printf("Failed to fetch manager's Jira account: %v\n", err)
+		managerUser = &jira.User{AccountID: unknownUser}
+	}
+
+	jiraIssue := &jira.Issue{
+		Fields: &jira.IssueFields{
+			Reporter:    reporterUser,
+			Description: description,
+			Type:        jira.IssueType{Name: config.AppConfig.JiraConfig.IssueType},
+			Project:     jira.Project{Key: config.AppConfig.JiraConfig.Key},
+			Summary:     ticketSummary,
+		},
+	}
+
+	if sreUser.AccountID != unknownUser {
+		jiraIssue.Fields.Assignee = sreUser
+		jiraIssue.Fields.Labels = []string{managedLabel, fmt.Sprintf(sreLabel, sreUser.AccountID), fmt.Sprintf(managerLabel, managerUser.AccountID)}
+	}
+
+	createdIssue, _, err := issueService.Create(jiraIssue)
+	if err != nil {
+		return fmt.Errorf("failed to create issue: %w", err)
+	}
+	log.Printf("created new issue with key %v", createdIssue.Key)
+
+	messageTemplate, err := template.New("messageTemplate").Parse(config.AppConfig.MessageTemplate)
+	if err != nil {
+		return fmt.Errorf("failed to parse message template from appconfig: %w", err)
+	}
+
+	var message bytes.Buffer
+	err = messageTemplate.Execute(&message, map[string]string{"Username": fmt.Sprintf("[~accountid:%v]", sreUser.AccountID)})
+	if err != nil {
+		return fmt.Errorf("failed to apply parsed template to the specified data object: %w", err)
+	}
+
+	comment := &jira.Comment{Body: message.String()}
+	_, _, err = issueService.AddComment(createdIssue.ID, comment)
+	if err != nil {
+		return fmt.Errorf("issue %v was successfully created but failed to apply initial comment: %w", createdIssue.Key, err)
+	}
+	log.Printf("Initial comment successfully left on issue %v\n", createdIssue.Key)
+
+	initialStatusName := config.AppConfig.JiraConfig.Transitions[initialTransitionKey]
+	initialStatusId, err := getTransitionId(issueService, createdIssue.ID, initialStatusName)
+	if err != nil {
+		return fmt.Errorf("failed to fetch ID for status %v: %w", initialStatusName, err)
+	}
+
+	_, err = issueService.DoTransition(createdIssue.ID, initialStatusId)
+	if err != nil {
+		return fmt.Errorf("failed to transition issue %v to status %v: %w", createdIssue.Key, initialStatusName, err)
+	}
+	log.Printf("Issue %v has been transitioned to state %v", createdIssue.Key, initialStatusName)
 
 	return nil
 }
 
-func convertCSVToMap(reader *csv.Reader) (mapData []map[string]string, err error) {
-	data, err := reader.ReadAll()
+func HandleUpdate(issueService *jira.IssueService, webhook Webhook) error {
+	webhookIssue, _, err := issueService.Get(webhook.Issue.ID, nil)
+	if err != nil {
+		return fmt.Errorf("failed to get issue %v from jira webhook: %w", webhook.Issue.Key, err)
+	}
+
+	var sreId string
+	var managerId string
+	for _, label := range webhookIssue.Fields.Labels {
+		if strings.Contains(label, sreLabelKey) {
+			_, sreId, _ = strings.Cut(label, ":")
+		}
+		if strings.Contains(label, managerLabelKey) {
+			_, managerId, _ = strings.Cut(label, ":")
+		}
+	}
+
+	// If the comment isn't from the current assignee then we don't need to do anything.
+	if webhook.Comment.Author.AccountID != webhookIssue.Fields.Assignee.AccountID {
+		return nil
+	}
+
+	var transitionName string
+	if sreId == webhook.Comment.Author.AccountID {
+		transitionName = config.AppConfig.JiraConfig.Transitions[sreTransitionKey]
+	} else if managerId == webhook.Comment.Author.AccountID {
+		transitionName = config.AppConfig.JiraConfig.Transitions[managerTransitionKey]
+	}
+
+	transitionId, err := getTransitionId(issueService, webhookIssue.ID, transitionName)
+	if err != nil {
+		return fmt.Errorf("failed to get transition ID for status %v on issue %v: %w", transitionName, webhookIssue.Key, err)
+	}
+
+	_, err = issueService.DoTransition(webhookIssue.ID, transitionId)
+	if err != nil {
+		return fmt.Errorf("failed to transition issue %v to status %v: %w", webhookIssue.Key, transitionName, err)
+	}
+	log.Printf("Successfully updated ticket %v to status %v after comment from %v", webhookIssue.Key, transitionName, webhook.Comment.Author.Name)
+
+	return nil
+}
+
+func basicAuthClient(user, token string) *http.Client {
+	transport := jira.BasicAuthTransport{
+		Username: user,
+		Password: token,
+	}
+	return transport.Client()
+}
+
+func patAuthClient(token string) *http.Client {
+	transport := jira.PATAuthTransport{
+		Token: token,
+	}
+	return transport.Client()
+}
+
+func getTransitionId(issueService *jira.IssueService, issueId string, status string) (string, error) {
+	transitions, _, err := issueService.GetTransitions(issueId)
+	if err != nil {
+		return "", err
+	}
+
+	for _, t := range transitions {
+		if t.Name == status {
+			return t.ID, nil
+		}
+	}
+	return "", fmt.Errorf("did not find status %v", status)
+}
+
+func getUserByName(userService *jira.UserService, username string) (*jira.User, error) {
+	users, _, err := userService.Find(username)
 	if err != nil {
 		return nil, err
 	}
 
-	header := []string{} // holds first row (header)
-	for lineNum, record := range data {
-
-		// for first row, build the header slice
-		if lineNum == 0 {
-			for i := 0; i < len(record); i++ {
-				header = append(header, strings.TrimSpace(record[i]))
-			}
-		} else {
-			// for each cell, map[string]string k=header v=value
-			line := map[string]string{}
-			for i := 0; i < len(record); i++ {
-				line[header[i]] = record[i]
-			}
-			mapData = append(mapData, line)
-		}
+	if jiraUserLen := len(users); jiraUserLen != 1 {
+		return nil, fmt.Errorf("error finding user %v: expected 1 user but found %v\n", username, jiraUserLen)
 	}
-
-	return mapData, nil
-
+	return &users[0], nil
 }
 
-// validateAttachment compares the name and date of the attachment to the issue summary and created date
-// Splunk alerts attachments are created with the alertname+date.csv format, so we can compare this to the
-// issue metadata to make sure it's the correct attachment
-func validateAttachment(summary string, created jira.Time, attachment *jira.Attachment) bool {
-	// Convert issue created time to time.Time
-	a := time.Time(created)
-
-	// Convert attachment create time to time.Time
-	b, err := time.Parse("2006-01-02T15:04:05.999999+0000", attachment.Created)
-	if err != nil {
-		log.Println(err)
-		return false
-	}
-
-	// Convert both to just time.Date
-	a_date := time.Date(a.Year(), a.Month(), a.Day(), 0, 0, 0, 0, time.UTC)
-	b_date := time.Date(b.Year(), b.Month(), b.Day(), 0, 0, 0, 0, time.UTC)
-
-	// If the attachment wasn't created on the same date as the issue, it's not the right one
-	if !a_date.Equal(b_date) {
-		return false
-	}
-
-	r := regexp.MustCompile(`^([A-Za-z_]+)-([0-9]{4}-[0-9]{2}-[0-9]{2}).csv$`)
-	result := r.FindAllStringSubmatch(attachment.Filename, -1)
-
-	alert_name := result[0][1]
-	alert_date, err := time.Parse("2006-01-02", result[0][2])
-	if err != nil {
-		log.Println(err)
-		return false
-	}
-
-	// If the date in the filename doesn't match the date of the issue, it's not the right one
-	if !alert_date.Equal(a_date) {
-		return false
-	}
-
-	// Check that the parsed attachment filename matches the summary
-	r2 := regexp.MustCompile(`^Compliance Alert: ([A-Za-z\s]+)$`)
-	result2 := r2.FindAllStringSubmatch(summary, -1)
-
-	// Replace spaces with underscores in the issue summary
-	r3 := regexp.MustCompile(`\s+`)
-	summary_name := r3.ReplaceAllString(result2[0][1], "_")
-
-	// If the summary name with underscores doesn't match the alert name, it's not the right one
-	if summary_name != alert_name {
-		return false
-	}
-
-	return true
+type UserService interface {
+	Find(property string, tweaks ...func([]userSearchParam) []userSearchParam) ([]jira.User, *jira.Response, error)
 }
 
-// issueHasLabel returns true if the label has been applied to the issue already, else false
-func issueHasLabel(issue *jira.Issue, label string) bool {
-	for i := range issue.Fields.Labels {
-		if issue.Fields.Labels[i] == label {
-			return true
-		}
-	}
-
-	return false
+type userSearchParam struct {
+	name  string
+	value string
 }
