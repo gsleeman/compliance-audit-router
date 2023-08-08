@@ -19,14 +19,14 @@ package listeners
 import (
 	"errors"
 	"fmt"
-	"github.com/go-chi/chi/v5"
-	"github.com/openshift/compliance-audit-router/pkg/jira"
-	"github.com/openshift/compliance-audit-router/pkg/ldap"
 	"log"
 	"net/http"
 	"os"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/openshift/compliance-audit-router/pkg/helpers"
+	"github.com/openshift/compliance-audit-router/pkg/jira"
+	"github.com/openshift/compliance-audit-router/pkg/ldap"
 	"github.com/openshift/compliance-audit-router/pkg/splunk"
 )
 
@@ -52,6 +52,11 @@ var Listeners = []Listener{
 		Methods:     []string{http.MethodPost},
 		HandlerFunc: ProcessAlertHandler,
 	},
+	{
+		Path:        "/api/v1/jira_webhook",
+		Methods:     []string{http.MethodPost},
+		HandlerFunc: ProcessJiraWebhook,
+	},
 }
 
 // InitRoutes initializes routes from the defined Listeners
@@ -65,9 +70,7 @@ func InitRoutes(router *chi.Mux) {
 
 // RespondOKHandler replies with a 200 OK and "OK" text to any request, for health checks
 func RespondOKHandler(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("OK"))
+	setResponse(w, http.StatusOK, map[string]string{"Content-Type": "text/plain"}, "OK")
 }
 
 // ProcessAlertHandler is the main logic processing alerts received from Splunk
@@ -106,23 +109,56 @@ func ProcessAlertHandler(w http.ResponseWriter, r *http.Request) {
 	user, manager, err := ldap.LookupUser("TODO USERNAME GOES HERE")
 	if err != nil {
 		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("failed ldap lookup"))
+		setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed ldap lookup")
 		return
 	}
 
-	err = jira.CreateTicket(user, manager, alert.Result)
+	client, err := jira.DefaultClient()
 	if err != nil {
 		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("failed ticket creation"))
+		setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed to create Jira client")
+	}
+
+	err = jira.CreateTicket(client.User, client.Issue, user, manager, "test description")
+	if err != nil {
+		log.Println(err)
+		setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed ticket creation")
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("ok"))
+	setResponse(w, http.StatusOK, map[string]string{"Content-Type": "text/plain"}, "ok")
 	return
+}
+
+func ProcessJiraWebhook(w http.ResponseWriter, r *http.Request) {
+	webhook := jira.Webhook{}
+	err := helpers.DecodeJSONRequestBody(w, r, &webhook)
+	if err != nil {
+		log.Println(err)
+		setResponse(w, http.StatusBadRequest, map[string]string{"Content-Type": "text/plain"}, "failed to parse webhook")
+		return
+	}
+
+	client, err := jira.DefaultClient()
+	if err != nil {
+		log.Println(err)
+		setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed to create Jira client")
+	}
+
+	err = jira.HandleUpdate(client.Issue, webhook)
+	if err != nil {
+		log.Println(err)
+		setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed to update JIRA issue")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func setResponse(w http.ResponseWriter, statusCode int, headers map[string]string, body string) {
+	w.WriteHeader(statusCode)
+	for k, v := range headers {
+		w.Header().Set(k, v)
+	}
+	_, _ = w.Write([]byte(body))
 }

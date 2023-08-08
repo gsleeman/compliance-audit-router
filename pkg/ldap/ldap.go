@@ -91,7 +91,7 @@ func LookupUser(username string) (string, string, error) {
 	var ldapManager string
 
 	if len(result.Entries) == 0 {
-		return "", "", errors.New("User not found")
+		return "", "", errors.New("user not found")
 	} else if len(result.Entries) > 1 {
 		return "", "", errors.New("multiple ldap entries found, please check your ldap config")
 	} else {

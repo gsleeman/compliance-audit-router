@@ -64,7 +64,11 @@ type JiraConfig struct {
 	Host          string
 	AllowInsecure bool
 	Token         string
-	Query         string
+	Username      string
+	Key           string
+	IssueType     string
+	Dev           bool
+	Transitions   map[string]string
 }
 
 func init() {

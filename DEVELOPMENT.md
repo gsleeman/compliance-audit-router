@@ -95,7 +95,7 @@ curl -D- \
 
 You should receive a 200 response with an empty project result, as nothing exists in your Jira instance yet.
 
-### Create an Project in your instance
+### Create a Project in your instance
 
 First retrieve your account id (note the `emailAddress` filter in the JQ command below):
 
@@ -118,14 +118,38 @@ curl -u your_email@example.org:your_api_token \
 
    This will leave you with a project that you can then tweak to configure to match your production instance.
 
+### Enabling Permissions for your project
+Before you can create and manage new issues in your test project, you will need to add yourself to the Administrators role for your cloud account. To do this, use the following steps:
+
+1. While logged in to your JIRA cloud web console, click the menu button in the top-left and switch to the "Administration" service.
+1. Select "Directory" from the top tabs.
+1. Select "Groups" from the left sidebar.
+1. Find the group `jira-admins-YOUR_ACCOUNT_NAME` and click "Show Details" for the group.
+1. Click "Add Group Members" and add your account as a User to the group.
+
 ### Setup Jira config for CAR
 
-Add your test instance credentials to your `~/compliance-audit-router/compliance-audit-router.yaml` file:
+Add your test instance credentials and other required fields to your `~/compliance-audit-router/compliance-audit-router.yaml` file:
 
+- host - the url for your JIRA instance
+- username - your JIRA username
+- token - your API token or personal access token
+- key - the project key for which issues will be created
+- issuetype - the type to assign to created issues
+- dev - whether CAR is being run in a development environment.
+  - Note: this setting will assume that you are using a Jira Cloud instance with Basic Auth
+- transitions - map of what state to transition a ticket to after a specific user comments on the ticket. The ticket will only be transitioned if that user is also the ticket's current assignee. Note that "initial" is the initial state a ticket will be placed in after it is created.
 ```yaml
 ---
 jiraconfig:
   host: https://your.instance.url
   username: your_email@example.org
   token: your_api_token
+  key: OHSS
+  issuetype: Task
+  dev: true
+  transitions:
+    initial: In Progress
+    sre: Pending Approval
+    manager: Done
 ```
