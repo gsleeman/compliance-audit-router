@@ -1,0 +1,54 @@
+<form class="form-horizontal form-complex">
+    <div class="control-group">
+        <label class="control-label" for="webhook_url">URL</label>
+        <div class="controls">
+            <input type="text" class="input-xlarge" name="action.auth_webhook.param.url" id="webhook_url" placeholder="https://your.server.com/foo/bar" />
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="controls">
+            <span class="help-block" style="display: block; position: static; width: auto; margin-left: 0;">
+                Specified URL to send JSON payload via HTTP POST
+            </span>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="control-label" for="basic_auth_user">Username</label>
+        <div class="controls">
+            <input type="text" class="input-xlarge" name="action.auth_webhook.param.basic_auth_user" id="basic_auth_user" placeholder="" />
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="controls">
+            <span class="help-block" style="display: block; position: static; width: auto; margin-left: 0;">
+		Basic auth username to user (can be left blank)
+            </span>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="control-label" for="basic_auth_pass">Password</label>
+        <div class="controls">
+            <input type="password" class="input-xlarge" name="action.auth_webhook.param.basic_auth_pass" id="basic_auth_pass" placeholder="" />
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="controls">
+            <span class="help-block" style="display: block; position: static; width: auto; margin-left: 0;">
+		Basic auth password to use (can be left blank)
+            </span>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="control-label" for="bearer_token">Bearer token</label>
+        <div class="controls">
+            <input type="text" class="input-xlarge" name="action.auth_webhook.param.bearer_token" id="webhook_url" placeholder="" />
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="controls">
+            <span class="help-block" style="display: block; position: static; width: auto; margin-left: 0;">
+                Bearer token to use (can be left blank)
+            </span>
+        </div>
+    </div>
+</form>
