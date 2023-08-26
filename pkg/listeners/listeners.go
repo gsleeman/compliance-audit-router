@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/openshift/compliance-audit-router/pkg/config"
 	"github.com/openshift/compliance-audit-router/pkg/helpers"
 	"github.com/openshift/compliance-audit-router/pkg/jira"
 	"github.com/openshift/compliance-audit-router/pkg/ldap"
@@ -91,25 +91,16 @@ func ProcessAlertHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Println("Received alert from Splunk:", alert.Sid)
-
-	// searchResults, err := splunk.RetrieveSearchFromAlert(alert.Sid)
-	// if err != nil {
-	// 	log.Println(err)
-	// 	w.WriteHeader(http.StatusInternalServerError)
-	// 	w.Header().Set("Content-Type", "text/plain")
-	// 	w.Write([]byte("failed alert lookup"))
-	// 	return
-	// }
-
 	fmt.Printf("%+v\n", alert)
 
-	os.Exit(1)
+	splunk := splunk.SplunkServer(config.AppConfig.SplunkConfig)
+	searchResults, err := splunk.RetrieveSearchFromAlert(alert.Sid)
 
-	//user, manager, err := ldap.LookupUser(searchResults.UserName)
-	user, manager, err := ldap.LookupUser("TODO USERNAME GOES HERE")
 	if err != nil {
 		log.Println(err)
-		setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed ldap lookup")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("failed alert lookup"))
 		return
 	}
 
@@ -119,11 +110,22 @@ func ProcessAlertHandler(w http.ResponseWriter, r *http.Request) {
 		setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed to create Jira client")
 	}
 
-	err = jira.CreateTicket(client.User, client.Issue, user, manager, "test description")
-	if err != nil {
-		log.Println(err)
-		setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed ticket creation")
-		return
+	for _, result := range searchResults.Details() {
+		log.Println(result)
+		//user, manager, err := ldap.LookupUser(searchResults.UserName)
+		user, manager, err := ldap.LookupUser(result.User)
+		if err != nil {
+			log.Println(err)
+			setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed ldap lookup")
+			return
+		}
+		err = jira.CreateTicket(client.User, client.Issue, user, manager, result.AlertName)
+		if err != nil {
+			log.Println(err)
+			setResponse(w, http.StatusInternalServerError, map[string]string{"Content-Type": "text/plain"}, "failed ticket creation")
+			return
+		}
+
 	}
 
 	setResponse(w, http.StatusOK, map[string]string{"Content-Type": "text/plain"}, "ok")

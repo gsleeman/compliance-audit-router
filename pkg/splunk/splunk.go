@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 
 	"github.com/openshift/compliance-audit-router/pkg/config"
 	"github.com/openshift/compliance-audit-router/pkg/helpers"
@@ -53,41 +52,38 @@ type SearchResults struct {
 	Preview     bool                `json:"preview"`
 	Results     []SearchResult      `json:"results"`
 	Highlighted map[string]string   `json:"highlighted"`
-	//Fields    []map[string]string `json:"fields"`
 }
+
+type SplunkServer config.SplunkConfig
 
 // NOTE: The webhook itself contains the search result. So this may not be necessary
 
 // RetrieveSearchFromAlert parses the received webhook, and looks up the data for the alert in Splunk,
 // and returns the information in an Alert struct
-func RetrieveSearchFromAlert(sid string) (Alert, error) {
-	var alert = Alert{}
-	var searchResults = SearchResults{}
+func (s SplunkServer) RetrieveSearchFromAlert(sid string) (Alert, error) {
 
-	alert.SearchID = sid
-	transport := &http.Transport{}
-	// Allow insecure connections for development
-	if config.AppConfig.SplunkConfig.AllowInsecure {
-		log.Printf("Allowing insecure connections to Splunk")
-		transport = &http.Transport{
+	splunkHttpClient := &http.Client{
+		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: s.AllowInsecure,
 			},
-		}
+		},
+	}
+
+	url := fmt.Sprintf("%s/services/search/jobs/%s/results?output_mode=json", s.Host, sid)
+
+	var alert = Alert{
+		SearchID:      sid,
+		SearchResults: SearchResults{},
 	}
 
 	// Create a new HTTP client; don't modify the default client
-	splunkHttpClient := &http.Client{Transport: transport}
-	req, err := http.NewRequest(
-		http.MethodGet,
-		getSplunkURL(config.AppConfig.SplunkConfig.Host, sid),
-		http.NoBody,
-	)
+	req, err := http.NewRequest(http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return alert, err
 	}
 
-	bearerToken := "Bearer" + config.AppConfig.SplunkConfig.Token
+	bearerToken := "Bearer" + s.Token
 	req.Header.Add("Authorization", bearerToken)
 
 	resp, err := splunkHttpClient.Do(req)
@@ -96,29 +92,12 @@ func RetrieveSearchFromAlert(sid string) (Alert, error) {
 	}
 
 	// Process the response
-	err = helpers.DecodeJSONResponseBody(resp, &searchResults)
+	err = helpers.DecodeJSONResponseBody(resp, &alert.SearchResults)
 	if err != nil {
 		return alert, err
 	}
 
-	alert.SearchResults = searchResults
-
-	log.Printf("Received alert from Splunk: %s", alert.SearchID)
-	for _, result := range alert.Details() {
-		log.Println(result)
-	}
-
-	// TODO: Can we make the un-marshalling of the XML response agnostic to any specific service?  Interfaces?
-	//var search Results
-
-	os.Exit(1)
-
+	log.Printf("Received alert from Splunk: %s, %v", alert.SearchID, alert.Details())
 	return alert, err
-}
 
-// getSplunkURL returns the URL for a Splunk search by sid
-func getSplunkURL(host, sid string) string {
-	return fmt.Sprintf(
-		"%s/services/search/jobs/%s/results?output_mode=json&count=0", host, sid,
-	)
 }

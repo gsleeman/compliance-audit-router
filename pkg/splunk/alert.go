@@ -4,7 +4,6 @@ import "time"
 
 // AlertDetails is a structured Splunk alert details
 type AlertDetails struct {
-	SearchResult
 	AlertName  string
 	User       string
 	Group      string
@@ -13,16 +12,20 @@ type AlertDetails struct {
 	Reasons    []string
 }
 
+// AlertDetails.Valid checks whether an alert has all the necessary fields for a compliance ticket
+func (a AlertDetails) Valid() bool {
+	return a.AlertName != "" && a.User != "" && a.Group != "" && len(a.ClusterIDs) > 0
+}
+
 // NewAlertDetails creates a new AlertDetails from a SearchResult
 func NewAlertDetails(result SearchResult) AlertDetails {
 	return AlertDetails{
-		SearchResult: result,
-		AlertName:    result.string("alertname"),
-		User:         result.string("username"),
-		Group:        result.string("group"),
-		Timestamp:    result.time("timestamp"),
-		ClusterIDs:   result.slice("clusterid"),
-		Reasons:      result.slice("reason"),
+		AlertName:  result.string("alertname"),
+		User:       result.string("username"),
+		Group:      result.string("group"),
+		Timestamp:  result.time("timestamp"),
+		ClusterIDs: result.slice("clusterid"),
+		Reasons:    result.slice("reason"),
 	}
 }
 
@@ -35,7 +38,10 @@ func (w Webhook) Details() AlertDetails {
 func (w Alert) Details() []AlertDetails {
 	alerts := []AlertDetails{}
 	for _, result := range w.SearchResults.Results {
-		alerts = append(alerts, NewAlertDetails(result))
+		alert := NewAlertDetails(result)
+		if alert.Valid() {
+			alerts = append(alerts, alert)
+		}
 	}
 	return alerts
 }
